@@ -19,6 +19,9 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { loadEnvFile } from "./lib-env.mjs";
+
+loadEnvFile(); // picks up .env from the project root, if present
 
 const BASE = "https://on.fiap.com.br";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";

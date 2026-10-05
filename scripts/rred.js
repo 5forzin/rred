@@ -15,9 +15,22 @@
  *   node scripts/rred.js --course 15350
  *   node scripts/rred.js --course 15350 --dry-run
  *
- * Credentials: RRED_RM and RRED_PASSWORD environment variables
- * (never in versioned files).
+ * Credentials (in precedence order): RRED_RM/RRED_PASSWORD environment
+ * variables, or a KEY=VALUE .env file in the project root (gitignored).
  */
+
+// pick up .env from the project root without overriding real env vars
+try {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const envPath = path.join(__dirname, "..", ".env");
+  for (const line of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+    if (m && !line.trim().startsWith("#") && !(m[1] in process.env)) {
+      process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    }
+  }
+} catch { /* no .env — fine */ }
 
 const BASE = "https://on.fiap.com.br";
 const UA =

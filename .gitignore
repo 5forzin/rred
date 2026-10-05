@@ -1,6 +1,7 @@
 # segredos e artefatos de sessão — nunca versionar
 .env
 .env.*
+!.env.example
 *.cookies.txt
 cookies-*.txt
 .sesskey

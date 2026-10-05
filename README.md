@@ -93,8 +93,6 @@ browser download).
 ## Usage
 
 ```bash
-export RRED_RM=<rm> RRED_PASSWORD=<password> DEEPSEEK_API_KEY=<key>
-
 node cli.mjs                    # animated banner + interactive menu
 node cli.mjs status             # credits + nano overview
 node cli.mjs auto --target 20   # full pipeline: from current credits to 20
@@ -103,6 +101,23 @@ node cli.mjs auto --target 20   # full pipeline: from current credits to 20
 node scripts/rred.js --course 15347        # 1) enroll + 0→100% (~10 s)
 node scripts/rred-exam.mjs --cmid 568460   # 2) autonomous exam (~2 min) → grade
 ```
+
+### Providing your portal credentials (3 ways, in precedence order)
+
+1. **Interactively** — easiest: just run any command without credentials
+   set and it will prompt for the portal username (RM) and password
+   (password input is hidden). It offers to save them to `.env` for next
+   time. Only asks for the LLM key when a command actually needs it
+   (exam / auto-pilot).
+2. **`.env` file** — copy `.env.example` to `.env` and fill in:
+   ```ini
+   RRED_RM=123456
+   RRED_PASSWORD="your-password"
+   DEEPSEEK_API_KEY="sk-..."
+   ```
+   `.env` is gitignored and never committed.
+3. **Environment variables** — `RRED_RM`, `RRED_PASSWORD`,
+   `DEEPSEEK_API_KEY` (or `OPENAI_API_KEY`).
 
 Solver flags: `--headed` (watch it run), `--provider openai` (fallback),
 `--model <id>`. Orchestrator flags: `--target N`, `--max-nanos K`.

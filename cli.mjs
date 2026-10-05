@@ -17,7 +17,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import readline from "node:readline";
+import { ask, ensureCredentials } from "./scripts/lib-env.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NO_BANNER = process.argv.includes("--no-banner") || !!process.env.RRED_NO_BANNER;
@@ -89,11 +89,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- menu
 
-function ask(q) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((r) => rl.question(q, (a) => { rl.close(); r(a.trim()); }));
-}
-
 function run(script, scriptArgs = []) {
   const r = spawnSync(process.execPath, [join(HERE, "scripts", script), ...scriptArgs], {
     stdio: "inherit",
@@ -103,6 +98,7 @@ function run(script, scriptArgs = []) {
 }
 
 async function menu() {
+  await ensureCredentials();
   while (true) {
     console.log("\x1b[1mWhat do you want to do?\x1b[0m");
     console.log("  \x1b[36m1\x1b[0m  Account status        (credits + nano overview)");
@@ -114,8 +110,8 @@ async function menu() {
     console.log();
     if (c === "1") { run("rred.js", ["--list"]); }
     else if (c === "2") { const id = await ask("nano course id> "); if (id) run("rred.js", ["--course", id]); }
-    else if (c === "3") { const id = await ask("quiz cmid> "); if (id) run("rred-exam.mjs", ["--cmid", id]); }
-    else if (c === "4") { const t = (await ask("credits target [20]> ")) || "20"; run("rred-auto.mjs", ["--target", t]); }
+    else if (c === "3") { await ensureCredentials({ llm: true }); const id = await ask("quiz cmid> "); if (id) run("rred-exam.mjs", ["--cmid", id]); }
+    else if (c === "4") { await ensureCredentials({ llm: true }); const t = (await ask("credits target [20]> ")) || "20"; run("rred-auto.mjs", ["--target", t]); }
     else if (c === "5" || c === "q") { console.log("bye."); process.exit(0); }
     else console.log("invalid choice");
     console.log();
@@ -125,9 +121,9 @@ async function menu() {
 // ---------------------------------------------------------------- main
 
 await banner();
-if (has("status")) { run("rred.js", ["--list"]); process.exit(0); }
-if (has("complete")) { const id = args[args.indexOf("complete") + 1]; if (!id) { console.error("usage: node cli.mjs complete <courseId>"); process.exit(2); } process.exit(run("rred.js", ["--course", id]) ? 0 : 1); }
-if (has("exam")) { const id = args[args.indexOf("exam") + 1]; if (!id) { console.error("usage: node cli.mjs exam <cmid>"); process.exit(2); } process.exit(run("rred-exam.mjs", ["--cmid", id]) ? 0 : 1); }
-if (has("auto")) { const t = args[args.indexOf("auto") + 1]; process.exit(run("rred-auto.mjs", ["--target", t || "20"]) ? 0 : 1); }
+if (has("status")) { await ensureCredentials(); process.exit(run("rred.js", ["--list"]) ? 0 : 1); }
+if (has("complete")) { await ensureCredentials(); const id = args[args.indexOf("complete") + 1]; if (!id) { console.error("usage: node cli.mjs complete <courseId>"); process.exit(2); } process.exit(run("rred.js", ["--course", id]) ? 0 : 1); }
+if (has("exam")) { await ensureCredentials({ llm: true }); const id = args[args.indexOf("exam") + 1]; if (!id) { console.error("usage: node cli.mjs exam <cmid>"); process.exit(2); } process.exit(run("rred-exam.mjs", ["--cmid", id]) ? 0 : 1); }
+if (has("auto")) { await ensureCredentials({ llm: true }); const t = args[args.indexOf("auto") + 1]; process.exit(run("rred-auto.mjs", ["--target", t || "20"]) ? 0 : 1); }
 if (args.length) { console.error("unknown command — run without args for the menu"); process.exit(2); }
 await menu();
