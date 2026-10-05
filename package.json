@@ -1,0 +1,15 @@
+{
+  "name": "rred",
+  "version": "1.0.0",
+  "description": "Authorized purple-team assessment of FIAP ON Nano Courses — automated progress, AI-solved exams, and countermeasures",
+  "main": "cli.mjs",
+  "directories": {
+    "doc": "docs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.12.0"
+  },
+  "scripts": {
+    "start": "node cli.mjs"
+  }
+}

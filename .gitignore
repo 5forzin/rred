@@ -1,0 +1,12 @@
+# segredos e artefatos de sessão — nunca versionar
+.env
+.env.*
+*.cookies.txt
+cookies-*.txt
+.sesskey
+
+# dependências
+node_modules/
+
+# evidências brutas de recon (mantidas fora do controle de versão)
+.recon/

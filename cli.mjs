@@ -1,0 +1,133 @@
+#!/usr/bin/env node
+/**
+ * rred — CLI entry point with presentation UX.
+ *
+ * Authorized purple-team assessment of FIAP ON Nano Courses
+ * (scope: https://on.fiap.com.br/nano-courses/* and /mod/quiz/*).
+ *
+ * Usage:
+ *   node cli.mjs                       interactive menu
+ *   node cli.mjs status                credits + nano overview
+ *   node cli.mjs complete <courseId>   enroll + drive 0→100% (HTTP)
+ *   node cli.mjs exam <cmid>           solve certification exam (Puppeteer+LLM)
+ *   node cli.mjs auto [--target N]     full pipeline: credits 0→N
+ *   --no-banner                        skip the animation
+ */
+
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import readline from "node:readline";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const NO_BANNER = process.argv.includes("--no-banner") || !!process.env.RRED_NO_BANNER;
+const args = process.argv.slice(2).filter((a) => a !== "--no-banner");
+const has = (x) => args.includes(x);
+
+// ---------------------------------------------------------------- banner
+
+const LOGO = String.raw`
+ ██████  ██████  ███████  ██████
+ ██      ██    ██ ██      ██
+ ██      ██    ██ █████   ██
+ ██████  ██████  ███████ ██
+`;
+const TAG = "Nano Courses, zero effort — authorized purple-team assessment";
+
+function gradient(i, n, s) {
+  // pink → magenta → cyan sweep matching the FIAP red/pink family
+  const stops = [[237, 20, 91], [155, 39, 167], [56, 189, 248]];
+  const t = Math.min(0.9999, Math.max(0, i / Math.max(1, n - 1))) * (stops.length - 1);
+  const a = stops[Math.floor(t)], b = stops[Math.ceil(t)];
+  const k = t - Math.floor(t);
+  const c = a.map((v, j) => Math.round(v + (b[j] - v) * k));
+  return `\x1b[38;2;${c[0]};${c[1]};${c[2]}m${s}\x1b[0m`;
+}
+
+async function banner() {
+  if (NO_BANNER) return;
+  const lines = LOGO.split("\n").filter((l) => l.length);
+  const w = Math.max(...lines.map((l) => l.length));
+
+  // glitch reveal: random blocks collapsing into the logo
+  const CHARS = "▓▒░#/\\|<>[]{}=+*";
+  for (let f = 0; f < 8; f++) {
+    process.stdout.write("\x1b[H\x1b[2J");
+    lines.forEach((l, y) => {
+      let out = "";
+      for (let x = 0; x < w; x++) {
+        const reveal = (y * w + x) / (lines.length * w);
+        const noisy = f / 8 < reveal;
+        out += noisy ? l[x] ?? " " : CHARS[(Math.random() * CHARS.length) | 0];
+      }
+      process.stdout.write("  " + gradient(f, 8, out) + "\r\n");
+    });
+    await sleep(45);
+  }
+
+  // settle: real logo, letter-by-letter color pulse, then tagline
+  process.stdout.write("\x1b[H\x1b[2J");
+  for (let p = 0; p <= lines[0].length; p++) {
+    process.stdout.write("\x1b[H");
+    lines.forEach((l) => {
+      process.stdout.write("  " + gradient(p, w, l.slice(0, p)) + "\r\n");
+    });
+    await sleep(14);
+  }
+  const tag = "  " + TAG;
+  for (let i = 0; i <= tag.length; i += 2) {
+    process.stdout.write("\x1b[s");
+    process.stdout.write("\x1b[" + (lines.length + 1) + ";1H\x1b[2K");
+    process.stdout.write(gradient(1, 2, tag.slice(0, i)));
+    process.stdout.write("\x1b[u");
+    await sleep(12);
+  }
+  process.stdout.write("\x1b[" + (lines.length + 1) + ";1H\x1b[2K  \x1b[2m" + TAG + "\x1b[0m\n\n");
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------- menu
+
+function ask(q) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((r) => rl.question(q, (a) => { rl.close(); r(a.trim()); }));
+}
+
+function run(script, scriptArgs = []) {
+  const r = spawnSync(process.execPath, [join(HERE, "scripts", script), ...scriptArgs], {
+    stdio: "inherit",
+    env: process.env,
+  });
+  return r.status === 0;
+}
+
+async function menu() {
+  while (true) {
+    console.log("\x1b[1mWhat do you want to do?\x1b[0m");
+    console.log("  \x1b[36m1\x1b[0m  Account status        (credits + nano overview)");
+    console.log("  \x1b[36m2\x1b[0m  Complete a nano       (enroll + 0→100%, pure HTTP)");
+    console.log("  \x1b[36m3\x1b[0m  Solve an exam         (Puppeteer + LLM, headless)");
+    console.log("  \x1b[36m4\x1b[0m  Auto-pilot            (reach a credits target)");
+    console.log("  \x1b[36m5\x1b[0m  Exit");
+    const c = await ask("\nchoice> ");
+    console.log();
+    if (c === "1") { run("rred.js", ["--list"]); }
+    else if (c === "2") { const id = await ask("nano course id> "); if (id) run("rred.js", ["--course", id]); }
+    else if (c === "3") { const id = await ask("quiz cmid> "); if (id) run("rred-exam.mjs", ["--cmid", id]); }
+    else if (c === "4") { const t = (await ask("credits target [20]> ")) || "20"; run("rred-auto.mjs", ["--target", t]); }
+    else if (c === "5" || c === "q") { console.log("bye."); process.exit(0); }
+    else console.log("invalid choice");
+    console.log();
+  }
+}
+
+// ---------------------------------------------------------------- main
+
+await banner();
+if (has("status")) { run("rred.js", ["--list"]); process.exit(0); }
+if (has("complete")) { const id = args[args.indexOf("complete") + 1]; if (!id) { console.error("usage: node cli.mjs complete <courseId>"); process.exit(2); } process.exit(run("rred.js", ["--course", id]) ? 0 : 1); }
+if (has("exam")) { const id = args[args.indexOf("exam") + 1]; if (!id) { console.error("usage: node cli.mjs exam <cmid>"); process.exit(2); } process.exit(run("rred-exam.mjs", ["--cmid", id]) ? 0 : 1); }
+if (has("auto")) { const t = args[args.indexOf("auto") + 1]; process.exit(run("rred-auto.mjs", ["--target", t || "20"]) ? 0 : 1); }
+if (args.length) { console.error("unknown command — run without args for the menu"); process.exit(2); }
+await menu();
