@@ -1,156 +1,162 @@
-# Countermeasures — Nano Courses (blue-team side)
+# Proposed fixes and detection
 
-Companion to [`TECHNICAL_ANALYSIS.md`](TECHNICAL_ANALYSIS.md). The root
-cause is a single one: **the server believes any client-declared timeline**.
-The measures below attack that root and add detection over the data stock
-that already exists.
+The [technical analysis](TECHNICAL_ANALYSIS.md) records two findings:
+the server accepted video progress without playback, and a browser script
+using an LLM passed certification exams. The first needs a change to how
+progress is recorded. The second needs a review of assessment design and
+ways to detect automated attempts.
 
-## 1. Prevention (corrective, by priority)
+These are proposed controls. Their effectiveness has not been tested
+against the scripts in this repository.
 
-### P0 — Server-side time validation in `set_visualizacao`
+## 1. Progress validation, in priority order
 
-Store per (user, video) the timestamp of the last accepted ping and reject
-physically impossible advances:
+### P0: validate elapsed time on the server
 
-```
+For each user and video, store the time of the last accepted progress
+update. Compare the reported advance with the time that has passed:
+
+```text
 delta_lastSecond ≤ (now - last_ping) × max_speed + tolerance
 ```
 
-- `max_speed` = 2× (accepts 2× playback, blocks "10 min of video in 1 s");
-- `timeElapsed` must be ≤ wall-clock time since the previous ping — never
-  incremented by client confession;
-- progress is inherently **monotonic and non-receding**; a `lastSecond`
-  smaller than the stored one must not reduce `percent`.
+A maximum speed of 2× would allow double-speed playback while rejecting
+a claim of ten minutes watched in one second. Calculate elapsed time on
+the server rather than trusting `timeElapsed`. Keep the highest accepted
+progress when a student seeks backwards.
 
-This alone kills the current PoC: the 22 videos of the test nano were marked
-in ~5 s of wall time against ~2 h of declared content.
+This check would reject the timing used in the Future-Proof test: the
+script marked 22 videos in about five seconds, reporting roughly two
+hours of content. Playback starts, seeks and tolerance values need to
+be accounted for when implementing the check.
 
-### P1 — Bind progress to actual media delivery
+### P1: connect progress updates to a playback session
 
-The player is already a same-origin iframe (`/local/streaming/embed.php`).
-That page knows the session, the video and the real delivery start time.
-Options:
+The player already uses a same-origin iframe at
+`/local/streaming/embed.php`. Use that session to identify the user and
+video, and establish when playback could have started.
 
-- `embed.php` issues an ephemeral token (nonce per session+video) that
-  `set_visualizacao` then requires; without opening the player, no progress;
-- compare the interval between "first byte delivered to the player" and the
-  declared `lastSecond` — the same P0 wall-clock accounting, now with proof
-  of delivery.
+One option is a short-lived token for each session and video, issued by
+`embed.php` and required by `set_visualizacao`. Where delivery data is
+available, compare its start time with the reported progress. A token or
+a media request alone does not prove the student watched the lesson;
+combine it with the elapsed-time check.
 
-### P2 — Rate limiting and burst caps on `/lib/ajax/service.php`
+### P2: limit bursts of progress updates
 
-Per-user + per-method limit: the player's natural behavior is ~4 pings/min
-(15 s per video). Any sequence of dozens of `set_visualizacao` within
-seconds is a blockable anomaly on the spot.
+Apply limits by user and method on `/lib/ajax/service.php`. The tested
+player updates about every 15 seconds during playback, with additional
+updates on pause and seek. Dozens of updates for different videos within
+a few seconds should trigger a check. Allow for the paired `time_spent`
+and `view` records when setting thresholds.
 
-### P3 — Login
+### P3: review login protections
 
-No captcha and no 2FA in the tested flow. Full TOTP for student accounts is
-debatable, but invisible captcha + per-IP/RM limits on password failures is
-the minimum against credential stuffing (login is also step one of any bot).
+The tested login did not present captcha or 2FA. Review limits on failed
+logins by IP and RM, and consider captcha or additional authentication
+where appropriate. Valid-credential tests do not show whether protections
+against repeated failed logins already exist.
 
-### P4 — Content protection (secondary, same root)
+### P4: review media URL access
 
-`get_conteudo_video` ships signed Vimeo MP4 download-ready URLs. If the
-content itself is the asset, shorten those URLs' TTL and bind them to the
-player session (P1) to curb leaks at scale.
+`get_conteudo_video` returns signed Vimeo MP4 URLs that can be requested
+directly. Review their lifetime and whether access can be tied to the
+player session. This addresses content distribution; progress validation
+still needs the controls above.
 
-## 2. Detection (with what exists in the logs today)
+## 2. Detection
 
-### 2.1 Exact signature of the `rred.js` PoC
+### 2.1 Patterns produced by `rred.js`
 
-Burst of `POST /lib/ajax/service.php` with a body containing
-`local_fiapws_set_visualizacao` where, **for the same user**:
+Look for `POST /lib/ajax/service.php` requests containing
+`local_fiapws_set_visualizacao`. For the same user, the script produces
+several patterns:
 
-1. volume: ≥ 10 calls in < 60 s (the legitimate player stays around 4/min);
-2. `lastSecond == duration_seconds` on every video (exact end, always);
-3. `timeElapsed == lastSecond + 1` in the submitted structure (the script's
-   fingerprint; a human pauses/resumes and produces scattered values);
-4. **absence** of `GET /local/streaming/embed.php` and of CDN (Vimeo)
-   traffic while progress advances — the PoC never opens the player;
-5. an entire course going 0→100% in wall time shorter than the sum of
-   durations.
+1. At least ten calls within a minute, often covering multiple videos.
+2. `lastSecond` exactly equal to `duration_seconds` for each video.
+3. `timeElapsed` exactly equal to `lastSecond + 1`.
+4. Progress advances without opening `/local/streaming/embed.php`. Media
+   delivery records can provide another check where those logs are available.
+5. A course reaches 100% in less time than playback would require, after
+   accounting for supported playback speeds and prior progress.
 
-Any two of the above combined are enough for a high-confidence alert.
+Use combinations of these patterns to flag sessions for review. Tune
+thresholds against normal player traffic before treating them as grounds
+for blocking an account.
 
-### 2.2 Retroactive audit queries (detect the stock)
+### 2.2 Review historical progress
+
+Compare declared viewing time with elapsed time between progress records.
+The original query sketch is below; table and column names need to be
+adapted to the actual schema:
 
 ```sql
--- declared progress vs wall time between first and last ping
+-- Compare declared progress with elapsed time between records.
 SELECT cm, video_id, SUM(time_elapsed), MAX(perc),
        TIMESTAMPDIFF(SECOND, MIN(created), MAX(created)) AS wall
 FROM local_fiapws_visualizacao
 GROUP BY user_id, course, cm
 HAVING SUM(time_elapsed) > TIMESTAMPDIFF(SECOND, MIN(created), MAX(created)) * 1.5;
--- courses completed faster than the sum of their durations
 ```
 
-(adjust names to the real schema; the idea is comparing declared time ×
-wall time per user.)
+This is a sketch, not a validated production query. Check whether
+`time_elapsed` is incremental or cumulative before summing it, and align
+the selected fields with the grouping used by the database. Compare
+course completion times with video durations as a separate check.
 
-### 2.3 Tracking metrics
+### 2.3 Metrics to track
 
-- distribution of 0→100% wall time per nano (tail below content duration =
-  fraud);
-- ratio of `set_visualizacao` pings / `embed.php` opens per session;
-- completion rate per cohort over time (spikes after scripts circulate
-  indicate sharing).
+- Completion time by course, including unusually short runs.
+- Progress updates compared with player opens in the same session.
+- Completion rates by cohort over time, to spot changes that warrant review.
 
-## 3. Phase 2 — Certification exam (`/mod/quiz/*`)
+## 3. Certification exams
 
-The exam was automated with a real browser + LLM: **grade 100/100,
-certificate and credits issued** (TECHNICAL_ANALYSIS §6). The underlying
-problem is different from progress: there was no protocol fraud to exploit —
-the AI simply answered correctly. Viable measures:
+The browser test scored 100/100 and received a certificate and credits
+([technical analysis, section 6](TECHNICAL_ANALYSIS.md#6-phase-2-certification-exams)).
+The script used the normal exam flow and answered correctly, so validating
+progress requests alone will not address exam automation.
 
-### LLM-resistant assessment (reduces viability, does not eliminate)
+### Assessment design
 
-1. **Dynamic, private question bank**: per-attempt random draws (already
-   happens — shuffled slots) with a large rotating pool make harvesting
-   hard — but an LLM answers unseen questions instantly; pool size alone
-   does not solve it.
-2. **Questions LLMs get wrong by construction**: intentional ambiguity,
-   "pick the INCORRECT one", double negatives, semantically close options,
-   and above all cases that depend on **course-internal material** (videos
-   and internal scripts not public) — the model has not seen the specific
-   content and fails without it. Today's questions are conceptual and
-   answerable from general knowledge.
-3. **Essay/code format with manual or test-based grading**: `essay` and
-   programming questions graded by execution are expensive to automate with
-   consistent quality.
+A larger, regularly updated private question bank can make answer
+collection harder. It does not prevent an LLM from answering questions
+it has never seen. The tested questions could be answered from general
+technical knowledge.
 
-### Automation signals (detection)
+Consider questions that require applying material from the course to a
+specific case. Assess whether written explanations, practical work or
+code evaluated by tests would provide better evidence of learning.
+These formats can also be assisted by AI, and may require manual review.
+Ambiguous wording and double negatives should not be treated as a
+reliable defense.
 
-- **Interaction telemetry**: time per question, mouse/scroll movement, tab
-  focus. A run with a constant ~5–10 s per question and zero mouse input is
-  a clear signature (`page.evaluate`-driven browsers emit no real input
-  events; synthetic clicks have detectable patterns).
-- **Supernatural cadence**: 20 questions + impossible reading time relative
-  to the observed pace; correlate per-question time × prompt length.
-- **Uniform response pattern**: ~zero latency variance across questions of
-  different difficulties.
+### Signals to review
 
-### Flow controls (existing, to strengthen)
+Question timing, scrolling, focus changes and input events may help
+identify automated attempts. In particular, look for short completion
+times and similar response times across questions with different lengths
+or difficulty. Correlate those signals with course progress and exam
+results. No single interaction pattern establishes that an attempt was
+automated.
 
-- The **retake cooldown** after a zeroed grade (until 10/20/2026) is the
-  only pacing control today; extend it to: minimum time between the nano's
-  100% and the exam start (currently zero — the exam ran seconds after the
-  forged 100%), and a minimum exam duration before submission (a top grade
-  in <2 min against 2h30 of content is an anomaly).
-- The **exam gate reads an async aggregator** (visualizacao takes seconds to
-  minutes to propagate after marking — analysis phase 4). It delayed the
-  pipeline by minutes, nothing more; if intentional, make it an explicit
-  per-account+nano rate limit (e.g., progress only counts toward
-  certification if reported over ≥ X% of the course hours).
-- **Bind the exam to real consumption**: require plausible progress
-  evidence (section 1 P0/P1) before releasing the attempt — today the gate
-  trusts the same forgeable `visualizacao`.
+### Exam access and pacing
 
-## 4. Note on "fixing it on the client"
+The test observed a retake cooldown after a zero score, with the next
+opportunity on October 20, 2026. Review whether additional pacing checks
+are useful, such as the interval between course completion and the exam
+or unusually short exam durations. These checks should use observed
+student behavior and exam requirements; a short attempt alone does not
+prove misconduct.
 
-Any obstacle placed in the Next.js front-end (obfuscated calls,
-fingerprinting, tab-visibility checks) **does not solve this**: the attacker
-speaks HTTP directly to Moodle, as the PoC proves. The control must live in
-the service that writes progress and in the logs that audit it.
-Obfuscation only raises the reverse-engineering cost of the chunks — which,
-as demonstrated, was minutes of simple static analysis.
+The delay between chapter completion and exam availability also needs
+review. It postponed the script's access, but the exam eventually opened
+after accepting the same progress reports. Require server-validated
+progress before releasing a certification attempt.
+
+## 4. Where to enforce the controls
+
+The progress script sends requests directly to Moodle. Changes to the
+Next.js interface, such as obfuscation or tab-visibility checks, would
+not stop those requests. Validate progress in the service that records
+it, and retain enough information to review suspicious sessions.

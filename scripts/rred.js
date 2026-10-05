@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 /**
- * rred — Nano Courses progress automation PoC (FIAP ON).
+ * Test whether FIAP ON accepts video completion without playback.
  *
  * Authorized scope: https://on.fiap.com.br/nano-courses/*
- * Purpose: purple-team exercise by the security team (proof of concept +
- * input for countermeasures). Do not use outside the scope.
+ * Part of the FIAP security team's assessment. Use only within this scope.
  *
- * Flow: login → sesskey → nano list → (enroll if needed) → chapters →
- * videos → set_visualizacao claiming the end of each video → before/after
- * progress report with per-step timings.
+ * Log in, enroll if needed and report each video at its full duration.
+ * Print chapter progress before and after the requests, with timings.
  *
  * Usage:
  *   node scripts/rred.js --list
@@ -19,7 +17,7 @@
  * variables, or a KEY=VALUE .env file in the project root (gitignored).
  */
 
-// pick up .env from the project root without overriding real env vars
+// Load .env without replacing existing environment variables.
 try {
   const fs = require("node:fs");
   const path = require("node:path");
@@ -30,7 +28,7 @@ try {
       process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
     }
   }
-} catch { /* no .env — fine */ }
+} catch { /* .env is optional. */ }
 
 const BASE = "https://on.fiap.com.br";
 const UA =
@@ -60,7 +58,7 @@ function parseArgs(argv) {
 
 // ---------------------------------------------------------- http/session
 
-let cookie = ""; // the MoodleSession value (the only relevant cookie)
+let cookie = ""; // MoodleSession cookie used for authentication.
 
 async function http(path, { method = "GET", body, headers = {} } = {}) {
   const res = await fetch(BASE + path, {
@@ -80,7 +78,7 @@ async function http(path, { method = "GET", body, headers = {} } = {}) {
 }
 
 async function login(rm, password) {
-  // first GET so the anonymous session is born (origin cookies)
+  // Create an anonymous session before submitting credentials.
   await http("/index.php");
   const res = await http("/index.php", {
     method: "POST",
@@ -91,7 +89,7 @@ async function login(rm, password) {
   if (res.status !== 303 || !location.includes("/local/home/")) {
     throw new Error(`login refused (HTTP ${res.status}, redirect ${location || "none"})`);
   }
-  step(`login ok → session established (redirect ${location})`);
+  step(`Logged in (redirect ${location})`);
 }
 
 async function fetchSesskey() {
@@ -146,10 +144,10 @@ async function driveCourse(sesskey, courseId, { dryRun = false, delay = 0 } = {}
   const [detailsBefore] = await ws(sesskey, [call("local_nanocourses_get_course_details", { course_id: courseId })]);
   step(`course: ${detailsBefore.nome} (workload ${detailsBefore.carga_horaria}h, credits ${detailsBefore.creditos})`);
   if (!detailsBefore.subscribed) {
-    if (dryRun) throw new Error("not enrolled — dry-run will not enroll");
-    step("enrolling via inscricao.php…");
+    if (dryRun) throw new Error("Not enrolled in this course. Dry-run does not enroll.");
+    step("Enrolling in the course…");
     await http(detailsBefore.url_inscricao.replace(BASE, ""));
-    // course context switch (what the "start" button does on the front-end)
+    // Switch course context, as the platform's start button does.
     await http(`/troca-curso.php?id=${courseId}`);
   }
 
@@ -159,7 +157,7 @@ async function driveCourse(sesskey, courseId, { dryRun = false, delay = 0 } = {}
 
   let marked = 0;
   for (const ch of chapters) {
-    if (!ch.conteudosvideocm) { step(`  ${ch.nome}: no video (cm ${ch.cmid}) — skipping`); continue; }
+    if (!ch.conteudosvideocm) { step(`  ${ch.nome}: no video (cm ${ch.cmid}); skipped`); continue; }
     const [videoData] = await ws(sesskey, [call("local_salavirtual_get_conteudo_video", { cm: ch.conteudosvideocm })]);
     const pending = (videoData.videos || []).filter((v) => v.percent !== 100);
     step(`  ${ch.nome}: ${videoData.videos.length} videos, ${pending.length} pending`);
@@ -169,7 +167,7 @@ async function driveCourse(sesskey, courseId, { dryRun = false, delay = 0 } = {}
     if (delay) await sleep(delay);
   }
 
-  if (dryRun) { step("dry-run: nothing was sent to the server"); return; }
+  if (dryRun) { step("Dry-run finished. No progress updates were sent."); return; }
 
   // 3) final state
   const [chaptersAfter] = await ws(sesskey, [call("local_nanocourses_get_conteudos", { course_id: courseId })]);
@@ -186,7 +184,7 @@ async function driveCourse(sesskey, courseId, { dryRun = false, delay = 0 } = {}
   const rm = process.env.RRED_RM;
   const password = process.env.RRED_PASSWORD;
   if (!rm || !password) {
-    console.error("set RRED_RM and RRED_PASSWORD in the environment");
+    console.error("Set RRED_RM and RRED_PASSWORD in .env or the environment.");
     process.exit(2);
   }
 

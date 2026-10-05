@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * rred-exam — standalone Certification Exam solver (Puppeteer + LLM).
+ * Answer certification exams using Puppeteer and an LLM.
  *
  * Authorized scope: https://on.fiap.com.br/mod/quiz/* (purple-team
- * exercise by the FIAP security team). Flow proven in project phase 2:
- * login → preflight → one question per page (single/multi) → answer via
- * DeepSeek (OpenAI fallback) → summary → checkbox_finalizar → grade.
+ * exercise by the FIAP security team). Log in, confirm the start modal,
+ * read each question and request an answer from DeepSeek or OpenAI.
+ * Submit the answers and read the grade from the review page.
  *
  * Usage:
  *   RRED_RM=… RRED_PASSWORD=… DEEPSEEK_API_KEY=… \
@@ -19,7 +19,7 @@ import { execSync } from "node:child_process";
 import https from "node:https";
 import { loadEnvFile } from "./lib-env.mjs";
 
-loadEnvFile(); // picks up .env from the project root, if present
+loadEnvFile(); // Load .env from the project root, if present.
 
 const BASE = "https://on.fiap.com.br";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
@@ -35,14 +35,14 @@ const PROVIDER = args.provider || "deepseek";
 if (!CMID) { console.error("usage: node scripts/rred-exam.mjs --cmid <id>"); process.exit(2); }
 
 const RM = process.env.RRED_RM, PW = process.env.RRED_PASSWORD;
-if (!RM || !PW) { console.error("set RRED_RM and RRED_PASSWORD"); process.exit(2); }
+if (!RM || !PW) { console.error("Set RRED_RM and RRED_PASSWORD in .env or the environment."); process.exit(2); }
 
 const PROVIDERS = {
   deepseek: { url: "https://api.deepseek.com/chat/completions", model: "deepseek-chat", key: process.env.DEEPSEEK_API_KEY },
   openai: { url: "https://api.openai.com/v1/chat/completions", model: "gpt-4o-mini", key: process.env.OPENAI_API_KEY },
 };
 const P = PROVIDERS[PROVIDER];
-if (!P?.key) { console.error(`set ${PROVIDER === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY"}`); process.exit(2); }
+if (!P?.key) { console.error(`Set ${PROVIDER === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY"} in .env or the environment.`); process.exit(2); }
 
 const t0 = Date.now();
 const step = (m) => console.log(`[+${((Date.now() - t0) / 1000).toFixed(1)}s] ${m}`);
@@ -69,14 +69,14 @@ async function askLLM(text, options, kind) {
     model: P.model,
     messages: [
       { role: "system", content: multi
-        ? "You are an expert taking technology certification exams in Portuguese. This question admits MULTIPLE correct answers. Reply ONLY with JSON {\"answers\":[\"<letter>\",...]} with every correct letter."
-        : "You are an expert taking technology certification exams in Portuguese. Reply ONLY with JSON {\"answer\":\"<letter>\"} with the single correct letter." },
+        ? "Answer this technology certification question in Portuguese. More than one option can be correct. Return only JSON {\"answers\":[\"<letter>\",...]} with all correct letters."
+        : "Answer this technology certification question in Portuguese. Choose one correct option. Return only JSON {\"answer\":\"<letter>\"} with its letter." },
       { role: "user", content: `QUESTION:\n${text}\n\nOPTIONS:\n${menu}\n\nJSON:` },
     ],
     temperature: 0, max_tokens: 2000,
   });
   const txt = d.choices?.[0]?.message?.content || "";
-  const bad = new Error(`LLM out of format: ${txt.slice(0, 120)}`);
+  const bad = new Error(`The model returned an unexpected answer format: ${txt.slice(0, 120)}`);
   if (multi) {
     const m = /\{\s*"answers"\s*:\s*\[([^\]]*)\]/is.exec(txt) || /\[([^\]]*)\]/.exec(txt);
     if (!m) throw bad;
@@ -99,7 +99,7 @@ async function findEdge() {
   ]) {
     try { execSync(`if exist "${p}" exit 0`, { shell: "cmd.exe" }); return p; } catch {}
   }
-  throw new Error("no Edge/Chrome found");
+  throw new Error("Edge or Chrome was not found in the checked installation paths.");
 }
 
 const browser = await puppeteer.launch({
@@ -126,7 +126,7 @@ try {
   if (!page.url().includes("/local/home/")) throw new Error("login did not reach the home page: " + page.url());
   step("login ok");
 
-  // ---- open the exam and pass the preflight ("I'm ready")
+  // Open or resume the exam and confirm the start modal if present.
   step(`opening quiz ${CMID}…`);
   await page.goto(`${BASE}/mod/quiz/view.php?id=${CMID}`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("button");
@@ -145,8 +145,8 @@ try {
     const btn =
       btns.find((b) => /Responder agora|iniciar|começar/i.test(b.textContent || b.value || "")) ||
       [...scope.querySelectorAll("form")].find((f) => /startattempt|attempt\.php/.test(f.action))?.querySelector("button, input[type=submit]");
-    if (btn) { btn.click(); return "preflight confirmed"; }
-    return cb ? "checkbox ok, no button" : "no preflight";
+    if (btn) { btn.click(); return "Start confirmed"; }
+    return cb ? "Start checkbox selected, but no submit button found" : "No start confirmation shown";
   });
   step(started);
   await page.waitForFunction(() => /quiz\/attempt\.php/.test(location.href), { timeout: 20000 });
@@ -169,7 +169,7 @@ try {
 
   let n = 0;
   while (true) {
-    // wait for the question to settle (navigation sometimes delivers slowly)
+    // Question inputs may arrive after navigation completes.
     const WAITQ = `(() => { const r=[...document.querySelectorAll('input,textarea,select')].some(i=>/^q\\d+:\\d+_/.test(i.name)); return r || /quiz\\/(summary|review)\\.php/.test(location.href); })()`;
     try {
       await page.waitForFunction(WAITQ, { timeout: 30000, polling: 250 });
@@ -179,7 +179,7 @@ try {
         inputs: document.querySelectorAll("input").length,
         body: document.body.innerText.replace(/\s+/g, " ").slice(0, 300),
       }));
-      throw new Error(`question never appeared: ${JSON.stringify(diag)}`);
+      throw new Error(`Timed out waiting for a question: ${JSON.stringify(diag)}`);
     }
     if (/quiz\/(summary|review)\.php/.test(page.url())) break;
 
@@ -190,7 +190,7 @@ try {
     const ids = q.kind === "multi"
       ? letter.map((l) => q.options[l.charCodeAt(0) - 97]?.id)
       : [q.options[letter.charCodeAt(0) - 97]?.id];
-    if (ids.some((x) => !x)) throw new Error(`question ${n}: letter without option (${letter})`);
+    if (ids.some((x) => !x)) throw new Error(`Question ${n}: no option matches the returned letter (${letter})`);
 
     const btnName = await page.evaluate((ids, kind) => {
       const click = (id) => { const el = document.querySelector(`label[for="${id}"]`) || document.getElementById(id); if (el) el.click(); };
@@ -205,9 +205,9 @@ try {
     console.log(`  Q${String(n).padStart(2)} [${q.kind}] ${q.field} → AI: ${Array.isArray(letter) ? letter.join("") : letter} (${btnName})`);
     await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
   }
-  step(` ${n} questions answered — at ${page.url().split("/").pop().split("?")[0]}`);
+  step(`${n} questions answered. Current page: ${page.url().split("/").pop().split("?")[0]}`);
 
-  // ---- finish (summary → checkbox_finalizar modal → submit)
+  // Confirm the final submission through the checkbox_finalizar modal.
   if (/quiz\/summary\.php/.test(page.url())) {
     await page.evaluate(() => {
       const btn = document.querySelector(".quizfinishbuttondiv button, form.singlebutton button, input[name=finishattempt], button[name=finishattempt]");

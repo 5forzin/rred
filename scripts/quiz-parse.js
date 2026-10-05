@@ -1,7 +1,7 @@
 /**
- * Parser for Moodle quiz pages (FIAP skin).
- * Question: .content-question with .qtext and radios q<qid>:<slot>_answer
- * (labels "a."–"e."). One question per page on this quiz.
+ * Parse questions and grades from the FIAP Moodle quiz HTML.
+ * Tested pages contain one question, with .qtext and _answer radio fields
+ * or _choiceN checkbox fields.
  */
 const fs = require("fs");
 
@@ -19,7 +19,7 @@ function decode(s) {
     .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 }
 
-/** label of an input by its for=id attribute (FIAP skin puts it after the input) */
+/** Read the label linked to an input by its for attribute. */
 function labelFor(html, id) {
   const re = new RegExp(`for="${id}"[^>]*>([\\s\\S]{0,600}?)</label>`, "s");
   const m = re.exec(html);
@@ -47,7 +47,7 @@ function parseAttemptPage(html) {
   const qt = /<div[^>]*class="qtext"[^>]*>([\s\S]*?)<\/div>/s.exec(html);
   const text = qt ? stripTags(qt[1]) : "";
 
-  // 1) single: radios _answer
+  // Single-answer questions use _answer radio fields.
   const radio = /name="q(\d+):(\d+)_answer"/.exec(html);
   if (radio) {
     const [, qid, slot] = radio;
@@ -62,7 +62,7 @@ function parseAttemptPage(html) {
     return out;
   }
 
-  // 2) multi: checkboxes _choiceN (hidden+checkbox pair)
+  // Multiple-answer questions use hidden and checkbox _choiceN fields.
   const cbx = /name="q(\d+):(\d+)_choice(\d+)"/.exec(html);
   if (cbx) {
     const [, qid, slot] = cbx;

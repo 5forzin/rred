@@ -1,7 +1,7 @@
 {
   "name": "rred",
   "version": "1.0.0",
-  "description": "Authorized purple-team assessment of FIAP ON Nano Courses — automated progress, AI-solved exams, and countermeasures",
+  "description": "Scripts and findings from the FIAP ON Nano Courses security assessment",
   "main": "cli.mjs",
   "directories": {
     "doc": "docs"

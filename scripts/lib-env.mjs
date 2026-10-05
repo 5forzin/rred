@@ -1,9 +1,7 @@
 /**
- * Shared environment helpers: .env loading and interactive credential
- * prompts. No dependencies.
+ * Load .env and ask for missing credentials using Node's built-in modules.
  *
- * Precedence: real environment variables > .env file (project root) >
- * interactive prompt (optionally saved back to .env).
+ * Use existing environment variables first, then .env, then prompts.
  */
 import fs from "node:fs";
 import readline from "node:readline";
@@ -37,9 +35,7 @@ export function loadEnvFile(path = join(PROJECT_ROOT, ".env")) {
 
 // ---------------------------------------------------------------- prompt
 
-// One readline interface + a line queue, so sequential questions work both
-// on a TTY (typed after each prompt) and with piped stdin (all lines
-// arrive at once and would otherwise be dropped between questions).
+// Queue input lines so piped answers are not lost between prompts.
 let rlSingleton = null;
 const lineQueue = [];
 let lineWaiter = null;
@@ -69,34 +65,32 @@ export function ask(question, hidden = false) {
 }
 
 /**
- * Ensures the needed credentials exist, prompting for the missing ones.
- * Keys: rm → RRED_RM, password → RRED_PASSWORD (hidden), llm →
- * DEEPSEEK_API_KEY (only when { llm: true }).
- * Offers to persist the answers to .env (gitignored) for next time.
+ * Ask for missing portal credentials and offer to save them to .env.
+ * With { llm: true }, also ask for a DeepSeek key if neither provider is set.
  */
 export async function ensureCredentials({ llm = false } = {}) {
   loadEnvFile();
   const needSave = {};
 
   if (!process.env.RRED_RM) {
-    process.env.RRED_RM = await ask("portal username (RM): ");
+    process.env.RRED_RM = await ask("Portal username (RM): ");
     needSave.RRED_RM = process.env.RRED_RM;
   }
   if (!process.env.RRED_PASSWORD) {
-    process.env.RRED_PASSWORD = await ask("portal password: ", true);
+    process.env.RRED_PASSWORD = await ask("Portal password: ", true);
     needSave.RRED_PASSWORD = process.env.RRED_PASSWORD;
   }
   if (llm && !process.env.DEEPSEEK_API_KEY && !process.env.OPENAI_API_KEY) {
-    process.env.DEEPSEEK_API_KEY = await ask("DeepSeek API key (blank to skip): ", true);
+    process.env.DEEPSEEK_API_KEY = await ask("DeepSeek API key (press Enter to skip): ", true);
     if (process.env.DEEPSEEK_API_KEY) needSave.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
   }
 
   if (Object.keys(needSave).length) {
-    const save = (await ask("save these to .env for next time? [y/N] ")).toLowerCase() === "y";
+    const save = (await ask("Save these values to .env? [y/N] ")).toLowerCase() === "y";
     if (save) {
       const body = Object.entries(needSave).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join("\n");
       fs.writeFileSync(join(PROJECT_ROOT, ".env"), body + "\n", { flag: "a" });
-      console.log("saved to .env (gitignored — never committed)");
+      console.log("Saved to .env, which is excluded from Git by default.");
     }
   }
 }

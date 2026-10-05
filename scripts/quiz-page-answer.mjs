@@ -1,6 +1,6 @@
 /**
- * Helper: reads a quiz attempt page (HTML), asks the LLM and prints the
- * exact urlencoded body for processattempt. Exit 42 = no question (end/summary).
+ * Read a saved quiz page, request an answer and print the URL-encoded
+ * form body for processattempt. Exit 42 means no question was found.
  *
  * Usage: node scripts/quiz-page-answer.mjs <file.html> [--provider deepseek|openai]
  */
@@ -19,13 +19,13 @@ const PROVIDERS = {
 async function askLLM(question, options, kind) {
   const p = PROVIDERS[provider];
   const key = process.env[p.keyEnv];
-  if (!key) throw new Error(`set ${p.keyEnv}`);
+  if (!key) throw new Error(`Set ${p.keyEnv} in the environment.`);
   const letters = "abcdefgh";
   const menu = options.map((o, i) => `${letters[i]}) ${o.label}`).join("\n");
   const multi = kind === "multi";
   const system = multi
-    ? "You are an expert taking technology certification exams in Portuguese. This question admits MULTIPLE correct answers. Reply ONLY with JSON {\"answers\":[\"<letter>\",...]} with every correct letter."
-    : "You are an expert taking technology certification exams in Portuguese. Reply ONLY with JSON {\"answer\":\"<letter>\"} with the single correct letter.";
+    ? "Answer this technology certification question in Portuguese. More than one option can be correct. Return only JSON {\"answers\":[\"<letter>\",...]} with all correct letters."
+    : "Answer this technology certification question in Portuguese. Choose one correct option. Return only JSON {\"answer\":\"<letter>\"} with its letter.";
   const res = await fetch(p.url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -43,7 +43,7 @@ async function askLLM(question, options, kind) {
   const txt = (await res.json()).choices?.[0]?.message?.content || "";
   const toIdx = (l) => {
     const i = l.toLowerCase().charCodeAt(0) - 97;
-    if (i < 0 || i >= options.length) throw new Error(`invalid letter ${l}`);
+    if (i < 0 || i >= options.length) throw new Error(`No option matches the returned letter ${l}.`);
     return i;
   };
   if (multi) {
@@ -52,19 +52,19 @@ async function askLLM(question, options, kind) {
     return { indexes: [...new Set(ls)].map(toIdx), letters: ls };
   }
   const m = /\{\s*"answer"\s*:\s*"([a-h])"\s*\}/i.exec(txt) || /"([a-h])"/i.exec(txt);
-  if (!m) throw new Error(`LLM out of format: ${txt.slice(0, 100)}`);
+  if (!m) throw new Error(`The model returned an unexpected answer format: ${txt.slice(0, 100)}`);
   return { index: toIdx(m[1]), letter: m[1].toLowerCase() };
 }
 
 const html = fs.readFileSync(file, "utf8");
 const parsed = parseAttemptPage(html);
 if (!parsed.question) {
-  console.error("(no parseable question on this page)");
+  console.error("No question could be read from this page.");
   process.exit(42);
 }
 const q = parsed.question;
 const ans = await askLLM(q.text, q.options, q.kind);
-console.error(`? type=${q.kind} slot=${q.slot} AI=${q.kind === "multi" ? ans.letters.join("") : ans.letter}`);
+console.error(`Question ${q.slot} (${q.kind}): selected ${q.kind === "multi" ? ans.letters.join(", ") : ans.letter}`);
 
 const fields = {};
 for (const [k, v] of Object.entries(parsed.hidden)) if (k !== "busca-menu") fields[k] = v;

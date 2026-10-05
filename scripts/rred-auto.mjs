@@ -1,15 +1,13 @@
 #!/usr/bin/env node
 /**
- * rred-auto — autonomous Nano Courses credits pipeline.
+ * Run course completion and exams until a credit target is reached.
  *
  * Authorized scope: https://on.fiap.com.br/nano-courses/* and
  * https://on.fiap.com.br/mod/quiz/* (purple-team, FIAP security team).
  *
- * One single command: while credits < target → pick the best nano (most
- * credits, fewest chapters, exam-bearing) → HTTP enroll + 0→100% → wait
- * for the exam gate → solve the exam with the Puppeteer solver
- * (rred-exam.mjs) → check credits → next. Detects cooldowns and moves on
- * to another candidate.
+ * Select courses by credit value and chapter count, enroll, submit video
+ * progress, then call rred-exam.mjs when the exam is available. Check the
+ * balance after each exam and skip courses whose exams are unavailable.
  *
  * Usage:
  *   RRED_RM=… RRED_PASSWORD=… DEEPSEEK_API_KEY=… \
@@ -21,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadEnvFile } from "./lib-env.mjs";
 
-loadEnvFile(); // picks up .env from the project root, if present
+loadEnvFile(); // Load .env from the project root, if present.
 
 const BASE = "https://on.fiap.com.br";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
@@ -34,7 +32,7 @@ const TARGET = Number(args.target) || 20;
 let maxNanos = Number(args["max-nanos"]) || 5;
 
 const RM = process.env.RRED_RM, PW = process.env.RRED_PASSWORD;
-if (!RM || !PW) { console.error("set RRED_RM and RRED_PASSWORD"); process.exit(2); }
+if (!RM || !PW) { console.error("Set RRED_RM and RRED_PASSWORD in .env or the environment."); process.exit(2); }
 
 const t0 = Date.now();
 const step = (m) => console.log(`[+${((Date.now() - t0) / 1000).toFixed(1)}s] ${m}`);
@@ -91,7 +89,7 @@ async function ws(sesskey, calls) {
 
 const call = (methodname, args) => ({ methodname, args });
 
-// ------------------------------------------------- domain (phase 1, HTTP)
+// ------------------------------------------------------- course progress
 
 async function getCredits(sesskey) {
   const [c] = await ws(sesskey, [call("local_nanocourses_get_credits_nanocourses", {})]);
@@ -135,8 +133,8 @@ async function quizStatus(sesskey, courseId) {
 }
 
 /**
- * The exam gate reads an async aggregator: right after 0→100% it may still
- * report 0%. Poll until status becomes a cmid (>0) or the window expires.
+ * Exam availability may lag behind chapter progress. Poll until the exam
+ * is available (status > 0), a cooldown is reported, or the retries run out.
  */
 async function waitQuizAvailable(sesskey, courseId, { tries = 16, everyMs = 15000 } = {}) {
   let st = await quizStatus(sesskey, courseId);
@@ -161,14 +159,14 @@ function solveExam(cmid) {
   step(`target: ${TARGET} credits`);
   await login();
   const sesskey = await getSesskey();
-  step("login ok");
+  step("Logged in");
 
   let credits = await getCredits(sesskey);
   step(`initial credits: ${credits}`);
-  if (credits >= TARGET) { step("target already met — nothing to do"); process.exit(0); }
+  if (credits >= TARGET) { step("The account already has enough credits."); process.exit(0); }
 
   const data = await listNanos(sesskey);
-  // candidates: exam-bearing (has_certificado=false), credits > 0
+  // Courses that offer credits and have no certificate yet.
   const blacklist = new Set();
   const candidates = data.courses
     .filter((c) => !c.has_certificado && c.creditos > 0)
@@ -177,36 +175,36 @@ function solveExam(cmid) {
   for (const nano of candidates) {
     if (credits >= TARGET) break;
     if (blacklist.has(nano.id)) continue;
-    step(`chosen nano: ${nano.nome} (id ${nano.id}, ${nano.creditos} credits, ${nano.qtd_capitulos} chapters)`);
+    step(`Selected course: ${nano.nome} (id ${nano.id}, ${nano.creditos} credits, ${nano.qtd_capitulos} chapters)`);
 
     if (!nano.inscrito) { await enroll(sesskey, nano); step("enrolled"); }
     if (nano.visualizacao !== 100) {
       const { chapters, marked } = await completeCourse(sesskey, nano.id);
-      step(`0→100% over HTTP: ${chapters} chapters, ${marked} videos marked`);
+      step(`Progress updates sent: ${chapters} chapters, ${marked} videos marked`);
     } else {
-      step("already at 100% — straight to the exam gate");
+      step("Progress is already at 100%. Checking exam availability.");
     }
 
     const st = await waitQuizAvailable(sesskey, nano.id);
     const cmid = typeof st.status === "number" && st.status > 0 ? st.status : null;
     if (!cmid) {
-      step(`exam unavailable (status ${st.status}: ${(st.text || "").slice(0, 80)}) — next nano`);
+      step(`Exam unavailable (status ${st.status}: ${(st.text || "").slice(0, 80)}). Trying the next course.`);
       blacklist.add(nano.id);
       continue;
     }
 
-    step(`solving exam cmid ${cmid} (Puppeteer + LLM)…`);
+    step(`Answering exam ${cmid}…`);
     const exam = solveExam(cmid);
     const log = exam.stdout.split("\n").filter((l) => /^\[|FINAL/.test(l)).slice(-4).join(" | ");
-    step(`exam: grade ${exam.grade ?? "?"} — ${log}`);
+    step(`Exam grade: ${exam.grade ?? "unavailable"} | ${log}`);
 
     credits = await getCredits(sesskey);
     step(`credits now: ${credits}`);
-    if (credits < TARGET && --maxNanos <= 0) { step("nano limit for this run reached"); break; }
+    if (credits < TARGET && --maxNanos <= 0) { step("Course limit reached for this run."); break; }
   }
 
   console.log("\n========================================");
   console.log(`FINAL CREDITS: ${credits} (target ${TARGET}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  console.log(credits >= TARGET ? "TARGET MET ✓" : "target not met — check cooldowns/limits");
+  console.log(credits >= TARGET ? "Credit target reached." : "Credit target not reached. Check exam availability and run limits.");
   process.exit(credits >= TARGET ? 0 : 1);
 })().catch((e) => { console.error(`[!] ${e.message}`); process.exit(1); });

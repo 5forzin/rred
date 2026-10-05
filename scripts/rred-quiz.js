@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * rred-quiz — PoC de automação da Prova de Certificação (Moodle quiz, skin FIAP).
+ * Versão experimental da prova de certificação via HTTP, sem navegador.
  *
  * Escopo autorizado: https://on.fiap.com.br/mod/quiz/*
- * Fluxo: login → startattempt (com preflight) → por página: parse da questão →
- * resposta via LLM (DeepSeek/OpenAI) → processattempt → finish → review com nota.
+ * Inicia a tentativa, lê cada questão, pede uma resposta ao modelo e envia
+ * o formulário. Nos dois testes, as respostas foram salvas, mas a nota foi
+ * zero. A causa ainda não foi identificada; veja a análise técnica, §6.4.
  *
  * Uso:
  *   RRED_RM=… RRED_PASSWORD=… [DEEPSEEK_API_KEY=…] [OPENAI_API_KEY=…] node scripts/rred-quiz.js \
@@ -35,7 +36,7 @@ function parseArgs(argv) {
 
 // ---------------------------------------------------------------- http
 
-let cookies = {}; // jar completo: name → value
+let cookies = {}; // Cookies da sessão, por nome.
 
 async function http(path, { method = "GET", body, headers = {} } = {}) {
   const jar = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join("; ");
@@ -45,7 +46,7 @@ async function http(path, { method = "GET", body, headers = {} } = {}) {
     headers: { "User-Agent": UA, ...(jar && { Cookie: jar }), ...headers },
     body,
   });
-  // captura TODOS os cookies de todas as respostas (getSetCookie p/ múltiplos)
+  // Guarda os cookies de cada resposta, incluindo múltiplos Set-Cookie.
   const raw = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
   for (const c of raw.length ? raw : (res.headers.get("set-cookie") || "").split(/,(?=[^;]+?=)/)) {
     const m = /^\s*([a-zA-Z0-9_]+)=([^;]*)/.exec(c);
@@ -68,7 +69,7 @@ async function login(rm, password) {
   });
   const loc = res.headers.get("location") || "";
   if (res.status !== 303 || !loc.includes("/local/home/")) throw new Error(`login recusado (HTTP ${res.status})`);
-  step(`login ok (${Object.keys(cookies).length} cookies no jar)`);
+  step(`Login concluído (${Object.keys(cookies).length} cookies na sessão)`);
 }
 
 async function getSesskey() {
@@ -79,11 +80,11 @@ async function getSesskey() {
   return m[1];
 }
 
-/** POST form e segue um redirect, devolvendo (url, html). */
+/** Envia o formulário e segue um redirecionamento, retornando URL e HTML. */
 async function postFollow(path, fields, { multipart = false, referer = null } = {}) {
   let body, headers = {};
   if (multipart) {
-    // multipart/form-data como o form real declara (enctype do responseform)
+    // Usa multipart/form-data, conforme o enctype do formulário.
     const bd = "----rred" + Math.random().toString(36).slice(2);
     const parts = [];
     for (const [k, v] of Object.entries(fields)) {
@@ -121,8 +122,8 @@ async function askLLM(provider, model, question, options, kind) {
   const menu = options.map((o, i) => `${letters[i]}) ${o.label}`).join("\n");
   const multi = kind === "multi";
   const system = multi
-    ? "Você é um especialista respondendo provas de certificação de tecnologia em português. A questão admite MULTIPLAS alternativas corretas. Responda APENAS com um objeto JSON {\"answers\":[\"<letra>\",…]} contendo todas as letras corretas (ao menos uma). Sem explicações."
-    : "Você é um especialista respondendo provas de certificação de tecnologia em português. Responda APENAS com um objeto JSON no formato {\"answer\":\"<letra>\"} onde <letra> é a letra da única alternativa correta. Sem explicações.";
+    ? "Responda à questão de certificação de tecnologia em português. Pode haver mais de uma alternativa correta. Retorne somente JSON {\"answers\":[\"<letra>\",…]} com todas as letras corretas e ao menos uma resposta."
+    : "Responda à questão de certificação de tecnologia em português. Escolha uma alternativa correta. Retorne somente JSON {\"answer\":\"<letra>\"} com a letra escolhida.";
   const user = `QUESTÃO:\n${question}\n\nALTERNATIVAS:\n${menu}\n\nJSON ${multi ? "com as letras corretas" : "com a letra correta"}:`;
   const body = {
     model: model || p.model,
@@ -186,7 +187,7 @@ async function runAttempt(cmid, attemptId, firstPageHtml, { provider, model, dry
   let sesskey = null;
   while (true) {
     const parsed = parseAttemptPage(html);
-    if (!parsed.question) throw new Error(`página ${page} sem questão parseável`);
+    if (!parsed.question) throw new Error(`Não foi possível ler a questão da página ${page}.`);
     const q = parsed.question;
     const letters = "abcdefgh";
     console.log(`\n— Página ${page} | ${q.kind} | q${q.qid}:${q.slot}_`);
@@ -196,10 +197,10 @@ async function runAttempt(cmid, attemptId, firstPageHtml, { provider, model, dry
     const ans = await askLLM(provider, model, q.text, q.options, q.kind);
     if (dryRun) {
       console.log("  → IA:", q.kind === "multi" ? ans.letters.join(",") : ans.letter);
-      step("dry-run: não enviando"); break;
+      step("Dry-run: resposta consultada, sem envio ao portal."); break;
     }
 
-    // monta POST: hiddens do form + resposta + botão
+    // Mantém os campos ocultos e adiciona a resposta e o botão de envio.
     const fields = {};
     for (const [k, v] of Object.entries(parsed.hidden)) {
       if (k === "busca-menu") continue;
@@ -227,7 +228,7 @@ async function runAttempt(cmid, attemptId, firstPageHtml, { provider, model, dry
     require("fs").writeFileSync(`.recon/quiz-post-p${realPage}.body`, formBody(fields));
     const r = await postFollow("/mod/quiz/processattempt.php", fields, { referer });
 
-    // resposta veio como erro? (páginas legítimas: attempt.php / summary.php / review.php)
+    // Após o envio, espera uma página de tentativa, resumo ou resultado.
     const landedOk =
       /\/mod\/quiz\/(attempt|summary|review)\.php/.test(r.url) || /q\d+:\d+_/.test(r.html);
     if (!landedOk) {
@@ -236,8 +237,8 @@ async function runAttempt(cmid, attemptId, firstPageHtml, { provider, model, dry
       throw new Error(`POST da página ${page} falhou: ${em ? em[1] : `HTTP ${r.status} sem questão`}`);
     }
 
-    // VERIFICAÇÃO de persistência (indicadores presentes no HTML cru):
-    // nav do slot = "Resposta salva" E sequencecheck incrementado.
+    // Consulta o HTML novamente para verificar a indicação de resposta salva
+    // e registrar o sequencecheck atual.
     {
       const chk = await http(`/mod/quiz/attempt.php?attempt=${attemptId}&cmid=${cmid}&page=${realPage}`);
       const chtml = await chk.text();
@@ -248,16 +249,16 @@ async function runAttempt(cmid, attemptId, firstPageHtml, { provider, model, dry
       if (!saved) {
         require("fs").writeFileSync(`.recon/quiz-nopersist-p${realPage}.html`, chtml);
         throw new Error(
-          `página (slot ${q.slot}): resposta NÃO persistiu — nav diz "${nav ? nav[1] : "?"}", ` +
+          `Questão ${q.slot}: resposta não salva. Navegação: "${nav ? nav[1] : "?"}", ` +
           `seqcheck ${seqWas}→${seqNow ? seqNow[1] : "?"}`
         );
       }
-      step(`slot ${q.slot} persistida ✓ (seqcheck ${seqWas}→${seqNow?.[1]}, nav: "${nav[1]}")`);
+      step(`Questão ${q.slot}: resposta salva (seqcheck ${seqWas}→${seqNow?.[1]}, navegação: "${nav[1]}")`);
     }
 
-    // última página cai no summary (confirmação de fim) ou direto no review
+    // A última página leva ao resumo ou diretamente ao resultado.
     if (r.url.includes("summary.php")) {
-      step("summary de tentativa — confirmando envio final");
+      step("Respostas concluídas. Confirmando o envio final.");
       const r2 = await postFollow("/mod/quiz/processattempt.php", {
         attempt: attemptId, finishattempt: "1", timeup: "0", slots: "", cmid: String(cmid), sesskey,
         checkbox_finalizar: "1",
@@ -278,7 +279,7 @@ async function showReview(attemptId) {
   const res = await http(`/mod/quiz/review.php?attempt=${attemptId}`);
   const html = await res.text();
   const rev = parseReviewPage(html);
-  console.log("\n=== REVIEW ===");
+  console.log("\nResultado da tentativa:");
   if (rev.overall) console.log("nota geral:", rev.overall);
   rev.questions.forEach((q) => console.log(`  questão ${q.id}: ${q.correctness ?? "?"} ${q.grade ?? ""}`));
   return rev;
