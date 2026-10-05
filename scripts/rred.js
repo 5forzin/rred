@@ -3,7 +3,7 @@
  * Test whether FIAP ON accepts video completion without playback.
  *
  * Authorized scope: https://on.fiap.com.br/nano-courses/*
- * Part of the FIAP security team's assessment. Use only within this scope.
+ * Use only within the authorized scope.
  *
  * Log in, enroll if needed and report each video at its full duration.
  * Print chapter progress before and after the requests, with timings.

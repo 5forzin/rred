@@ -2,8 +2,8 @@
 /**
  * Answer certification exams using Puppeteer and an LLM.
  *
- * Authorized scope: https://on.fiap.com.br/mod/quiz/* (purple-team
- * exercise by the FIAP security team). Log in, confirm the start modal,
+ * Authorized scope: https://on.fiap.com.br/mod/quiz/*.
+ * Log in, confirm the start modal,
  * read each question and request an answer from DeepSeek or OpenAI.
  * Submit the answers and read the grade from the review page.
  *

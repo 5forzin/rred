@@ -3,7 +3,7 @@
  * Run course completion and exams until a credit target is reached.
  *
  * Authorized scope: https://on.fiap.com.br/nano-courses/* and
- * https://on.fiap.com.br/mod/quiz/* (purple-team, FIAP security team).
+ * https://on.fiap.com.br/mod/quiz/*.
  *
  * Select courses by credit value and chapter count, enroll, submit video
  * progress, then call rred-exam.mjs when the exam is available. Check the

@@ -1,18 +1,18 @@
 # rred
 
-Security assessment of FIAP ON Nano Courses, carried out with the FIAP
-security team on October 5, 2026, using a test account they provided.
+I assessed the security of FIAP ON Nano Courses on October 5, 2026,
+using a test account.
 
-We tested whether scripts could mark courses as complete and pass the
+I tested whether scripts could mark courses as complete and pass the
 certification exams without watching the lessons. Both worked in the
 tested courses. This repository contains the scripts, test results and
 proposed fixes.
 
-## What we found
+## What I found
 
 The platform accepts video progress reported by the client through
 `local_fiapws_set_visualizacao`. Sending a video's full duration as
-`lastSecond` was enough to mark it as watched. We did not observe a check
+`lastSecond` was enough to mark it as watched. I did not observe a check
 against the time that had actually passed.
 
 | Course | Before the test | Result | Time, including login |
@@ -26,7 +26,7 @@ The first Agentic AI exam run scored 100/100, issued a certificate and
 added 6 credits to the account. That run took about 10 minutes, including
 waits between steps.
 
-We later put the browser flow into `rred-exam.mjs` and added
+I later put the browser flow into `rred-exam.mjs` and added
 `rred-auto.mjs` to select courses, enroll, submit progress, wait for the
 exam to become available and check the credit balance after each exam.
 
@@ -44,7 +44,7 @@ estimated 2–5 minutes from 0 to 20+ credits depends on exam availability
 and the time taken to answer questions; it was not measured in a single
 run from a fresh account.
 
-We saw no captcha, 2FA challenge or rate-limit response in the tested
+I saw no captcha, 2FA challenge or rate-limit response in the tested
 flow. A failed exam did trigger a retake cooldown. Progress also took
 seconds to minutes to appear in the exam availability check. See the
 [technical analysis](docs/TECHNICAL_ANALYSIS.md) for the evidence and
@@ -109,7 +109,9 @@ For OpenAI, set `OPENAI_API_KEY` and pass `--provider openai` to
 The credit-target runner calls the exam script with
 its default provider, DeepSeek.
 
-To skip the banner animation, use `--no-banner` or set `RRED_NO_BANNER=1`.
+The opening animation runs for about four seconds in red tones. Press
+Enter or Space to skip it. Use `--no-banner` or set `RRED_NO_BANNER=1`
+to disable it. Output redirected to a file uses a static logo.
 
 ## Scope
 
@@ -117,11 +119,10 @@ The assessment covered `https://on.fiap.com.br/nano-courses/*`,
 `https://on.fiap.com.br/mod/quiz/*`, platform login and the AJAX services
 used by those flows.
 
-The security team provided the test account and funded the API keys.
-No real student data was accessed. Credentials and raw session evidence
+I did not access real student data. Credentials and raw session evidence
 are kept outside version control.
 
-We did not test third-party credentials, bypassing the mandatory course
+I did not test third-party credentials, bypassing the mandatory course
 requirement, other courses or plugins, or access to answers through the
 exam review page. The test account had already met the mandatory course
 requirement, and the review page did not display an answer key.

@@ -1,7 +1,7 @@
 {
   "name": "rred",
   "version": "1.0.0",
-  "description": "Scripts and findings from the FIAP ON Nano Courses security assessment",
+  "description": "Security tests and findings for FIAP ON Nano Courses.",
   "main": "cli.mjs",
   "directories": {
     "doc": "docs"

@@ -1,7 +1,7 @@
 # Technical analysis
 
-Assessment date: October 5, 2026. The FIAP security team provided the test
-account. The scope covered `https://on.fiap.com.br/nano-courses/*` and,
+Assessment date: October 5, 2026. I used a test account.
+The scope covered `https://on.fiap.com.br/nano-courses/*` and,
 from phase 2, `https://on.fiap.com.br/mod/quiz/*`.
 
 ## 1. Platform architecture
@@ -9,7 +9,7 @@ from phase 2, `https://on.fiap.com.br/mod/quiz/*`.
 The `/nano-courses/` page is a Next.js application using the App Router.
 The HTML contains `BAILOUT_TO_CLIENT_SIDE_RENDERING`, and the page renders
 on the client. It calls a Moodle backend on the same domain through
-`POST /lib/ajax/service.php`. We identified the methods by reading the
+`POST /lib/ajax/service.php`. I identified the methods by reading the
 JavaScript chunks `app/nano-courses/page-*.js` and `6426-*.js`.
 
 ```text
@@ -96,8 +96,8 @@ local_fiapws_set_visualizacao {
 
 `lastSecond` is the video's current position inside the iframe.
 `timeElapsed` is the accumulated time on screen. The server uses the
-reported `lastSecond` to calculate `percent`. In our tests, it accepted
-progress without enough elapsed time for playback. We did not observe
+reported `lastSecond` to calculate `percent`. In my tests, it accepted
+progress without enough elapsed time for playback. I did not observe
 checks for media delivery or progression over time.
 
 ### 2.7 Marking a video complete
@@ -135,12 +135,12 @@ still required for credits. The exam was tested in the next phase.
 The platform required a session and a Moodle `sesskey`. Both were available
 to the script after login. A mandatory course requirement also existed:
 `get_course_details` can return `norequiredcourse`. The test account had
-already met that requirement, so we did not test a bypass.
+already met that requirement, so I did not test a bypass.
 
 Video completion required `lastSecond ≥ duration_seconds`. The API exposed
 the duration, allowing the script to supply that value.
 
-About 40 rapid calls to `service.php` produced no rate-limit response. We
+About 40 rapid calls to `service.php` produced no rate-limit response. I
 saw no captcha or 2FA challenge in the tested flow, and found no analytics
 references in the inspected chunks; matches for "gTag" were references to
 `Symbol.toStringTag`. These observations do not rule out controls on other
@@ -148,7 +148,7 @@ routes or under different conditions.
 
 ## 5. Limitations
 
-- We did not test the mandatory course requirement on a fresh account,
+- I did not test the mandatory course requirement on a fresh account,
   courses without videos, or corporate/B2B accounts (`isB2b`).
 - The progress script only marks videos. Other content types may have
   different completion requirements; `html`, `audio` and `pdf` updates
@@ -161,7 +161,7 @@ routes or under different conditions.
 
 ## 6. Phase 2: certification exams
 
-We tested whether the exam could also be completed by a script. On the
+I tested whether the exam could also be completed by a script. On the
 Agentic AI course, the browser run scored 100/100 and the platform issued
 a certificate and 6 credits.
 
@@ -188,7 +188,7 @@ The FIAP interface uses Moodle's quiz routes:
   FIAP-specific checkbox field, the server reports
   "required parameter checkbox_finalizar missing".
 - `GET /mod/quiz/review.php` reports the grade in `data-finalgrade`.
-  The page we inspected did not show an answer key or per-question review.
+  The page I inspected did not show an answer key or per-question review.
 
 `local_quiz_get_status_prova_certificacao` returns a positive `status`
 containing the exam's `cmid` when an attempt is available. After an attempt
@@ -240,7 +240,7 @@ A `submit` hook recorded this browser POST:
 ```
 
 The recorded fields and values matched those submitted by
-`scripts/rred-quiz.js`, but the HTTP runs scored zero. We did not identify
+`scripts/rred-quiz.js`, but the HTTP runs scored zero. I did not identify
 the cause. Session state, cookies or differences in the navigation
 sequence are possible explanations, and remain unverified. Matching a
 form body does not establish that the full requests and sessions match.
@@ -277,7 +277,7 @@ stops. Courses whose exams are unavailable are skipped.
 Immediately after progress updates, `get_conteudos` showed every chapter
 at 100%, while `local_quiz_get_status_prova_certificacao` still reported
 `visualizacao: 0`. The discrepancy lasted seconds to minutes, consistent
-with an asynchronous update. We did not inspect the server implementation.
+with an asynchronous update. I did not inspect the server implementation.
 
 In a run covering nine courses, checks about 0.3 seconds after marking
 progress all returned 0%, so the runner skipped them. Several exams became
